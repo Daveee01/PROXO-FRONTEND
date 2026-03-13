@@ -1,18 +1,40 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
-## Getting Started
+## Team Setup (Important)
 
-First, run the development server:
+Use **npm only** for this repository.
+
+1. Install Node.js 20 LTS.
+2. Clone the repository.
+3. Run a clean install:
+
+```bash
+npm ci
+```
+
+4. Start dev server:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
+
+If you still get runtime errors after pulling new changes, remove cache and reinstall:
+
+```bash
+rm -rf node_modules .next
+npm ci
+npm run dev
+```
+
+On Windows PowerShell:
+
+```powershell
+Remove-Item -Recurse -Force node_modules,.next
+npm ci
+npm run dev
+```
+
+## Getting Started
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 

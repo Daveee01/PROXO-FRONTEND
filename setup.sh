@@ -28,7 +28,10 @@ fi
 ok "Node.js v$(node -v | sed 's/v//')"
 
 # ── Package manager detection ────────────────────────────────
-if command -v pnpm &>/dev/null && [ -f pnpm-lock.yaml ]; then
+# Prefer npm when package-lock.json exists to keep installs reproducible.
+if [ -f package-lock.json ]; then
+  PKG="npm"
+elif command -v pnpm &>/dev/null && [ -f pnpm-lock.yaml ]; then
   PKG="pnpm"
 elif command -v yarn &>/dev/null && [ -f yarn.lock ]; then
   PKG="yarn"

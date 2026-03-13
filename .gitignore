@@ -5,6 +5,7 @@ __v0_jsx-dev-runtime.ts
 
 # Dependencies
 node_modules/
+pnpm-lock.yaml
 .pnp
 .pnp.js
 .yarn/install-state.gz
