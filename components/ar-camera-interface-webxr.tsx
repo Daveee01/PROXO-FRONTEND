@@ -48,6 +48,11 @@ type XrPose = {
   quaternion: [number, number, number, number];
 };
 
+type XrPlacementTransform = {
+  position: [number, number, number];
+  yaw: number;
+};
+
 type UserLocation = {
   latitude: number;
   longitude: number;
@@ -104,10 +109,12 @@ const FALLBACK_TREE_MODEL_PATH = "/models/pine.glb";
 
 const GHIBLI_VERTEX_SHADER = /* glsl */ `
   varying vec3 vNormal;
+  varying vec3 vWorldNormal;
   varying vec3 vWorldPosition;
 
   void main() {
     vNormal = normal;
+    vWorldNormal = normalize(mat3(modelMatrix) * normal);
     vec4 worldPosition = modelMatrix * vec4(position, 1.0);
     vWorldPosition = worldPosition.xyz;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
@@ -123,12 +130,12 @@ const GHIBLI_FRAGMENT_SHADER = /* glsl */ `
   uniform float opacity;
 
   varying vec3 vNormal;
+  varying vec3 vWorldNormal;
   varying vec3 vWorldPosition;
 
   void main() {
-    vec3 worldNormal = normalize(mat3(modelMatrix) * normalize(vNormal));
     vec3 lightDirection = normalize(lightPosition - vWorldPosition);
-    float brightness = max(dot(worldNormal, lightDirection), 0.0);
+    float brightness = max(dot(normalize(vWorldNormal), lightDirection), 0.0);
     brightness = brightness * 0.82 + 0.18;
 
     vec3 finalColor;
@@ -165,11 +172,22 @@ const xrStore = createXRStore({
   depthSensing: false,
 });
 
-function LowPolyTree({ color, dimmed }: { color: string; dimmed: boolean }) {
+function LowPolyTree({
+  color,
+  dimmed,
+  animate = true,
+}: {
+  color: string;
+  dimmed: boolean;
+  animate?: boolean;
+}) {
   const groupRef = useRef<THREE.Group>(null);
   const threeColor = useMemo(() => new THREE.Color(color), [color]);
 
   useFrame((state) => {
+    if (!animate) {
+      return;
+    }
     if (!groupRef.current) {
       return;
     }
@@ -187,19 +205,19 @@ function LowPolyTree({ color, dimmed }: { color: string; dimmed: boolean }) {
       </mesh>
       <mesh position={[0, -0.5, 0]}>
         <cylinderGeometry args={[0.09, 0.14, 1.1, 8]} />
-        <meshStandardMaterial color="#92400e" transparent opacity={opacity} />
+        <meshBasicMaterial color="#92400e" transparent opacity={opacity} />
       </mesh>
       <mesh position={[0, 0.55, 0]}>
         <coneGeometry args={[0.85, 1.5, 7]} />
-        <meshStandardMaterial color={threeColor} flatShading transparent opacity={opacity} />
+        <meshBasicMaterial color={threeColor} transparent opacity={opacity} />
       </mesh>
       <mesh position={[0, 1.4, 0]}>
         <coneGeometry args={[0.6, 1.2, 6]} />
-        <meshStandardMaterial color={threeColor} flatShading transparent opacity={opacity} />
+        <meshBasicMaterial color={threeColor} transparent opacity={opacity} />
       </mesh>
       <mesh position={[0, 2.1, 0]}>
         <coneGeometry args={[0.35, 0.9, 5]} />
-        <meshStandardMaterial color={threeColor} flatShading transparent opacity={opacity} />
+        <meshBasicMaterial color={threeColor} transparent opacity={opacity} />
       </mesh>
     </group>
   );
@@ -336,13 +354,7 @@ function FallbackPlacementScene({
 
   return (
     <group position={[worldPos.x, worldPos.y, worldPos.z]} scale={0.18}>
-      {isPlacementMode ? (
-        <LowPolyTree color={tree.color} dimmed />
-      ) : (
-        <Suspense fallback={<LowPolyTree color={tree.color} dimmed={false} />}>
-          <PineTreeModel dimmed={false} />
-        </Suspense>
-      )}
+      <LowPolyTree color={tree.color} dimmed={isPlacementMode} />
       {isPlacementMode && <GroundRing color={tree.color} />}
     </group>
   );
@@ -352,6 +364,37 @@ const XR_TREE_SCALE = 0.45;
 const XR_RETICLE_MISS_TOLERANCE = 20;
 const XR_RETICLE_POSITION_LERP = 0.28;
 const XR_RETICLE_ROTATION_SLERP = 0.22;
+const XR_TREE_BASE_OFFSET = 1.06;
+
+function getTreePlacementTransform(pose: XrPose): XrPlacementTransform {
+  const sourceQuaternion = new THREE.Quaternion(
+    pose.quaternion[0],
+    pose.quaternion[1],
+    pose.quaternion[2],
+    pose.quaternion[3],
+  );
+
+  const flatForward = new THREE.Vector3(0, 0, -1).applyQuaternion(sourceQuaternion);
+  flatForward.y = 0;
+
+  if (flatForward.lengthSq() < 1e-5) {
+    flatForward.set(0, 0, -1);
+  }
+
+  flatForward.normalize();
+
+  const yaw = Math.atan2(flatForward.x, flatForward.z) + Math.PI;
+  const uprightQuaternion = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, yaw, 0));
+
+  return {
+    position: [
+      pose.position[0],
+      pose.position[1] + XR_TREE_BASE_OFFSET * XR_TREE_SCALE,
+      pose.position[2],
+    ],
+    yaw,
+  };
+}
 
 function XRPulsingRing({ color }: { color: string }) {
   const meshRef = useRef<THREE.Mesh>(null);
@@ -583,6 +626,9 @@ function XRAnchoredScene({
   onHitPose: (pose: XrPose) => void;
   onSurfaceFound: (found: boolean) => void;
 }) {
+  const previewTransform = previewPose ? getTreePlacementTransform(previewPose) : null;
+  const placedTransform = placedPose ? getTreePlacementTransform(placedPose) : null;
+
   return (
     <>
       <XRHitTestReticle
@@ -592,8 +638,8 @@ function XRAnchoredScene({
         onSurfaceFound={onSurfaceFound}
       />
 
-      {placementMode && !placed && previewPose && (
-        <group position={previewPose.position} quaternion={previewPose.quaternion} scale={XR_TREE_SCALE}>
+      {placementMode && !placed && previewTransform && (
+        <group position={previewTransform.position} rotation={[0, previewTransform.yaw, 0]} scale={XR_TREE_SCALE}>
           <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]}>
             <circleGeometry args={[1.35, 40]} />
             <meshBasicMaterial color="#000000" transparent opacity={0.18} />
@@ -602,12 +648,12 @@ function XRAnchoredScene({
             <ringGeometry args={[1.25, 1.55, 48]} />
             <meshBasicMaterial color={tree.color} transparent opacity={0.5} side={THREE.DoubleSide} />
           </mesh>
-          <LowPolyTree color={tree.color} dimmed />
+          <LowPolyTree color={tree.color} dimmed animate={false} />
         </group>
       )}
 
-      {placedPose && (
-        <group position={placedPose.position} quaternion={placedPose.quaternion} scale={XR_TREE_SCALE}>
+      {placedTransform && (
+        <group position={placedTransform.position} rotation={[0, placedTransform.yaw, 0]} scale={XR_TREE_SCALE}>
           <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]}>
             <circleGeometry args={[1.35, 40]} />
             <meshBasicMaterial color="#000000" transparent opacity={0.22} />
@@ -618,8 +664,7 @@ function XRAnchoredScene({
             <meshBasicMaterial color={tree.color} transparent opacity={0.42} side={THREE.DoubleSide} />
           </mesh>
 
-          <pointLight position={[1.8, 3.2, -0.8]} intensity={3.6} color="#fffbe6" />
-          <LowPolyTree color={tree.color} dimmed={false} />
+          <LowPolyTree color={tree.color} dimmed={false} animate={false} />
         </group>
       )}
     </>
@@ -656,6 +701,7 @@ export function ARCameraInterfaceWebXR({ onClose }: ARCameraInterfaceProps) {
   const streamRef = useRef<MediaStream | null>(null);
   const latestHitRef = useRef<XrPose | null>(null);
   const lastPlaceablePoseRef = useRef<XrPose | null>(null);
+  const placementLockRef = useRef(false);
 
   const stopCamera = useCallback(() => {
     streamRef.current?.getTracks().forEach((track) => track.stop());
@@ -969,7 +1015,7 @@ export function ARCameraInterfaceWebXR({ onClose }: ARCameraInterfaceProps) {
 
   const handleConfirmPlacement = () => {
     if (xrActive) {
-      if (xrPlacementBusy || treePlaced) {
+      if (placementLockRef.current || xrPlacementBusy || treePlaced) {
         return;
       }
 
@@ -979,6 +1025,7 @@ export function ARCameraInterfaceWebXR({ onClose }: ARCameraInterfaceProps) {
         return;
       }
 
+      placementLockRef.current = true;
       setXrPlacementBusy(true);
       setXrPlacedPose({
         position: [...pose.position] as [number, number, number],
@@ -989,6 +1036,7 @@ export function ARCameraInterfaceWebXR({ onClose }: ARCameraInterfaceProps) {
       setXrError(null);
       setTimeout(() => {
         setXrPlacementBusy(false);
+        placementLockRef.current = false;
       }, 250);
       return;
     }
@@ -1004,6 +1052,7 @@ export function ARCameraInterfaceWebXR({ onClose }: ARCameraInterfaceProps) {
       setShowImpact(false);
       setXrPlacedPose(null);
       setXrPlacementBusy(false);
+      placementLockRef.current = false;
       if (!xrSurfaceFound) {
         setXrError("Ground belum terdeteksi. Tidak bisa memindahkan pohon.");
       }
@@ -1023,6 +1072,7 @@ export function ARCameraInterfaceWebXR({ onClose }: ARCameraInterfaceProps) {
     setPlacementMode(false);
     setXrPlacedPose(null);
     setXrPlacementBusy(false);
+    placementLockRef.current = false;
     setXrError(null);
     latestHitRef.current = null;
     lastPlaceablePoseRef.current = null;
