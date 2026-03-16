@@ -1,217 +1,335 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import {
-  Leaf,
-  TreePine,
-  Sparkles,
-  ArrowRight,
-  Wind,
-  Droplets,
-  Trophy,
-  Users,
-  Zap,
-  ChevronDown,
-} from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { ChevronRight, Leaf, Eye, Zap, Check } from "lucide-react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
+import Tree3DCanvas from "@/components/Tree3DCanvas";
 
 interface LandingPageProps {
   onStartAR: () => void;
 }
 
-// Floating particle component
-function FloatingParticle({ delay, duration, size, left }: { delay: number; duration: number; size: number; left: number }) {
-  return (
-    <div
-      className="absolute bottom-0 opacity-0 animate-float"
-      style={{
-        left: `${left}%`,
-        animationDelay: `${delay}s`,
-        animationDuration: `${duration}s`,
-      }}
-    >
-      <div 
-        className="rounded-full bg-primary/30"
-        style={{ width: size, height: size }}
-      />
-    </div>
-  );
-}
-
 export function LandingPage({ onStartAR }: LandingPageProps) {
-  const [mounted, setMounted] = useState(false);
-  
+  const [isScrolled, setIsScrolled] = useState(false);
+  const [activeFeature, setActiveFeature] = useState(0);
+  const [touchStart, setTouchStart] = useState(0);
+  const containerRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
-    setMounted(true);
+    const handleScroll = () => {
+      setIsScrolled(window.scrollY > 50);
+    };
+
+    window.addEventListener("scroll", handleScroll);
+
+    return () => {
+      window.removeEventListener("scroll", handleScroll);
+    };
   }, []);
 
-  // Generate particles
-  const particles = Array.from({ length: 15 }, (_, i) => ({
-    id: i,
-    delay: Math.random() * 5,
-    duration: 8 + Math.random() * 6,
-    size: 6 + Math.random() * 10,
-    left: Math.random() * 100,
-  }));
+  const handleTouchStart = (e: React.TouchEvent) => {
+    setTouchStart(e.touches[0].clientX);
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent, total: number) => {
+    const touchEnd = e.changedTouches[0].clientX;
+
+    if (touchStart - touchEnd > 50 && activeFeature < total - 1) {
+      setActiveFeature(activeFeature + 1);
+    } else if (touchEnd - touchStart > 50 && activeFeature > 0) {
+      setActiveFeature(activeFeature - 1);
+    }
+  };
 
   return (
-    <div className="min-h-screen flex flex-col bg-background relative overflow-hidden">
-      {/* Animated background gradient blobs */}
-      <div className="absolute inset-0 pointer-events-none overflow-hidden">
-        <div className="absolute -top-40 -right-40 w-80 h-80 bg-primary/10 rounded-full blur-3xl animate-pulse" />
-        <div className="absolute top-1/2 -left-20 w-60 h-60 bg-accent/10 rounded-full blur-3xl animate-pulse" style={{ animationDelay: "1s" }} />
-        <div className="absolute -bottom-20 right-1/4 w-72 h-72 bg-primary/5 rounded-full blur-3xl animate-pulse" style={{ animationDelay: "2s" }} />
-      </div>
-
-      {/* Floating particles */}
-      {mounted && particles.map((p) => (
-        <FloatingParticle key={p.id} {...p} />
-      ))}
-
-      {/* Header */}
-      <header className="relative z-10 flex items-center justify-between px-5 py-4">
-        <div className="flex items-center gap-2.5">
-          <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-primary to-accent flex items-center justify-center shadow-lg shadow-primary/25">
-            <Leaf className="w-5 h-5 text-primary-foreground" />
+    <div ref={containerRef} className="min-h-screen bg-background overflow-x-hidden">
+      <nav
+        className={`fixed top-0 left-0 right-0 z-50 transition-all duration-500 ${
+          isScrolled ? "bg-background/95 backdrop-blur-md shadow-sm" : "bg-transparent"
+        }`}
+      >
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 sm:py-4 flex items-center justify-between">
+          <div className="flex items-center gap-2 sm:gap-3">
+            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-primary flex items-center justify-center shrink-0">
+              <Leaf className="w-4 sm:w-5 h-4 sm:h-5 text-primary-foreground" />
+            </div>
+            <div>
+              <h1 className="font-bold text-base sm:text-lg text-foreground">GreenSight</h1>
+              <p className="text-xs text-muted-foreground hidden sm:block">AR Experience</p>
+            </div>
           </div>
-          <div className="flex flex-col">
-            <span className="font-bold text-lg text-foreground leading-tight">GreenSight</span>
-            <span className="text-[10px] text-muted-foreground font-medium tracking-wide uppercase">AR Platform</span>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-secondary/80 backdrop-blur-sm">
-            <Trophy className="w-3.5 h-3.5 text-amber-500" />
-            <span className="text-xs font-semibold text-foreground">Level 12</span>
-          </div>
-        </div>
-      </header>
-
-      {/* Hero */}
-      <main className="relative z-10 flex-1 flex flex-col items-center justify-center px-6 text-center">
-        {/* Badge */}
-        <div className={`transition-all duration-700 ${mounted ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"}`}>
-          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-gradient-to-r from-primary/20 to-accent/20 text-foreground text-sm font-medium mb-6 border border-primary/20 backdrop-blur-sm">
-            <Sparkles className="w-4 h-4 text-primary" />
-            <span>AI-Powered AR Experience</span>
-            <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
-          </div>
-        </div>
-
-        {/* Main heading */}
-        <div className={`transition-all duration-700 delay-100 ${mounted ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"}`}>
-          <h1 className="text-5xl font-extrabold text-foreground leading-[1.1] mb-4 text-balance tracking-tight">
-            Plant Trees
-            <br />
-            <span className="bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">Anywhere</span>
-          </h1>
-        </div>
-
-        <p className={`text-muted-foreground text-lg leading-relaxed mb-8 max-w-xs text-pretty transition-all duration-700 delay-200 ${mounted ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"}`}>
-          Visualize trees in AR, track environmental impact, and compete with friends to save the planet.
-        </p>
-
-        {/* CTA Button */}
-        <div className={`transition-all duration-700 delay-300 ${mounted ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"}`}>
           <Button
             onClick={onStartAR}
-            size="lg"
-            className="rounded-full px-8 py-7 text-lg font-bold gap-3 bg-gradient-to-r from-primary to-accent text-primary-foreground hover:shadow-xl hover:shadow-primary/25 hover:scale-105 transition-all duration-300 group"
+            className="bg-primary hover:bg-accent text-primary-foreground rounded-full px-4 sm:px-6 py-2 text-xs sm:text-sm h-auto"
           >
-            <TreePine className="w-6 h-6" />
-            Start AR Planting
-            <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
+            Launch AR
           </Button>
         </div>
+      </nav>
 
-        {/* Quick stats row */}
-        <div className={`flex items-center gap-6 mt-8 transition-all duration-700 delay-400 ${mounted ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"}`}>
-          <div className="flex items-center gap-2">
-            <Users className="w-4 h-4 text-muted-foreground" />
-            <span className="text-sm text-muted-foreground"><strong className="text-foreground">42K</strong> planters</span>
+      <section className="relative min-h-screen pt-20 pb-12 sm:pt-32 sm:pb-20 px-4 sm:px-6 flex items-center justify-center">
+        <div className="max-w-4xl mx-auto text-center space-y-6 sm:space-y-8 relative z-10 w-full">
+          <div className="inline-block">
+            <div className="bg-secondary/50 backdrop-blur-sm border border-border rounded-full px-3 py-1.5 sm:px-4 sm:py-2 flex items-center gap-2 w-fit mx-auto animate-in fade-in slide-in-from-top duration-700">
+              <Zap className="w-3 sm:w-4 h-3 sm:h-4 text-primary shrink-0" />
+              <span className="text-xs sm:text-sm font-medium text-foreground">Revolutionary AR Technology</span>
+            </div>
           </div>
-          <div className="w-px h-4 bg-border" />
-          <div className="flex items-center gap-2">
-            <Zap className="w-4 h-4 text-amber-500" />
-            <span className="text-sm text-muted-foreground"><strong className="text-foreground">Live</strong> now</span>
+
+          <div className="space-y-3 sm:space-y-4 animate-in fade-in slide-in-from-bottom duration-1000 delay-100">
+            <h2 className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-bold text-balance leading-tight">
+              <span className="text-foreground">See Your</span>{" "}
+              <span className="bg-clip-text text-transparent bg-linear-to-r from-primary to-accent">
+                Green Future
+              </span>
+            </h2>
+            <p className="text-base sm:text-lg md:text-xl text-muted-foreground max-w-2xl mx-auto px-2 leading-relaxed">
+              Transform your environment with AR. Place virtual trees, see real impact.
+            </p>
+          </div>
+
+          <div className="flex flex-col gap-3 sm:gap-4 justify-center pt-6 sm:pt-8 animate-in fade-in slide-in-from-bottom duration-1000 delay-300 w-full px-2">
+            <Button
+              onClick={onStartAR}
+              className="bg-primary hover:bg-accent text-primary-foreground rounded-full px-6 sm:px-8 py-3 sm:py-4 text-sm sm:text-base h-auto w-full sm:w-auto sm:mx-auto"
+            >
+              <Leaf className="w-4 sm:w-5 h-4 sm:h-5 mr-2 shrink-0" />
+              Start AR Experience
+            </Button>
+            <Button
+              asChild
+              variant="outline"
+              className="border-primary text-primary hover:bg-primary/5 rounded-full px-6 sm:px-8 py-3 sm:py-4 text-sm sm:text-base h-auto w-full sm:w-auto sm:mx-auto"
+            >
+              <a href="#features">Learn More</a>
+            </Button>
           </div>
         </div>
 
-        {/* Stats Cards */}
-        <div className={`grid grid-cols-3 gap-3 mt-10 w-full max-w-sm transition-all duration-700 delay-500 ${mounted ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"}`}>
-          <div className="group flex flex-col items-center p-4 rounded-3xl bg-card/80 backdrop-blur-sm border border-border hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5 transition-all duration-300 cursor-pointer hover:-translate-y-1">
-            <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center mb-3 group-hover:scale-110 transition-transform">
-              <TreePine className="w-6 h-6 text-primary" />
-            </div>
-            <span className="text-2xl font-extrabold text-foreground">24K</span>
-            <span className="text-[11px] text-muted-foreground font-medium mt-0.5">Trees Planted</span>
+        <div className="absolute top-32 sm:top-20 left-0 sm:left-10 w-40 sm:w-72 h-40 sm:h-72 bg-primary/10 rounded-full blur-3xl animate-pulse" />
+        <div className="absolute bottom-32 sm:bottom-20 right-0 sm:right-10 w-48 sm:w-96 h-48 sm:h-96 bg-accent/5 rounded-full blur-3xl animate-pulse delay-1000" />
+      </section>
+
+      <section id="features" className="relative py-16 sm:py-24 px-4 sm:px-6 bg-secondary/30 backdrop-blur-sm">
+        <div className="max-w-6xl mx-auto">
+          <div className="text-center mb-12 sm:mb-16">
+            <h3 className="text-3xl sm:text-4xl md:text-5xl font-bold text-foreground mb-3 sm:mb-4">Powerful Features</h3>
+            <p className="text-sm sm:text-base md:text-lg text-muted-foreground max-w-2xl mx-auto px-2">
+              Everything you need to visualize and track your environmental impact
+            </p>
           </div>
-          <div className="group flex flex-col items-center p-4 rounded-3xl bg-card/80 backdrop-blur-sm border border-border hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5 transition-all duration-300 cursor-pointer hover:-translate-y-1">
-            <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center mb-3 group-hover:scale-110 transition-transform">
-              <Wind className="w-6 h-6 text-primary" />
+
+          <div className="relative">
+            <div className="hidden sm:grid md:grid-cols-3 gap-4 sm:gap-6">
+              {[
+                {
+                  icon: Eye,
+                  title: "Immersive AR Placement",
+                  description:
+                    "Experience photorealistic trees in your actual environment with precise placement and realistic scaling.",
+                  gradient: "from-primary/20 to-primary/5",
+                },
+                {
+                  icon: Zap,
+                  title: "AI-Powered Intelligence",
+                  description:
+                    "Smart recommendations based on your location, climate, and soil conditions for optimal tree selection.",
+                  gradient: "from-accent/20 to-accent/5",
+                },
+                {
+                  icon: Leaf,
+                  title: "Real-Time Impact",
+                  description:
+                    "Instantly visualize environmental benefits including CO2 absorption, oxygen production, and water retention.",
+                  gradient: "from-primary/20 to-accent/20",
+                },
+              ].map((feature, idx) => (
+                <div
+                  key={idx}
+                  className={`group bg-linear-to-br ${feature.gradient} border border-border rounded-2xl p-6 sm:p-8 hover:border-primary/50 transition-all duration-500 hover:shadow-lg hover:-translate-y-1`}
+                >
+                  <div className="w-12 h-12 sm:w-14 sm:h-14 bg-primary/10 rounded-xl flex items-center justify-center mb-4 sm:mb-6 group-hover:bg-primary/20 transition-colors">
+                    <feature.icon className="w-6 sm:w-7 h-6 sm:h-7 text-primary" />
+                  </div>
+                  <h4 className="text-lg sm:text-xl font-bold text-foreground mb-2 sm:mb-3">{feature.title}</h4>
+                  <p className="text-sm text-muted-foreground leading-relaxed">{feature.description}</p>
+                </div>
+              ))}
             </div>
-            <span className="text-2xl font-extrabold text-foreground">480T</span>
-            <span className="text-[11px] text-muted-foreground font-medium mt-0.5">CO2 Absorbed</span>
-          </div>
-          <div className="group flex flex-col items-center p-4 rounded-3xl bg-card/80 backdrop-blur-sm border border-border hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5 transition-all duration-300 cursor-pointer hover:-translate-y-1">
-            <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-blue-500/20 to-blue-500/5 flex items-center justify-center mb-3 group-hover:scale-110 transition-transform">
-              <Droplets className="w-6 h-6 text-blue-500" />
+
+            <div className="sm:hidden overflow-hidden" onTouchStart={handleTouchStart} onTouchEnd={(e) => handleTouchEnd(e, 3)}>
+              <div className="flex transition-transform duration-300 ease-out" style={{ transform: `translateX(-${activeFeature * 100}%)` }}>
+                {[
+                  {
+                    icon: Eye,
+                    title: "Immersive AR Placement",
+                    description:
+                      "Experience photorealistic trees in your actual environment with precise placement and realistic scaling.",
+                    gradient: "from-primary/20 to-primary/5",
+                  },
+                  {
+                    icon: Zap,
+                    title: "AI-Powered Intelligence",
+                    description:
+                      "Smart recommendations based on your location, climate, and soil conditions for optimal tree selection.",
+                    gradient: "from-accent/20 to-accent/5",
+                  },
+                  {
+                    icon: Leaf,
+                    title: "Real-Time Impact",
+                    description:
+                      "Instantly visualize environmental benefits including CO2 absorption, oxygen production, and water retention.",
+                    gradient: "from-primary/20 to-accent/20",
+                  },
+                ].map((feature, idx) => (
+                  <div key={idx} className="w-full shrink-0 px-2">
+                    <div className={`bg-linear-to-br ${feature.gradient} border border-border rounded-2xl p-6 h-full`}>
+                      <div className="w-12 h-12 bg-primary/10 rounded-xl flex items-center justify-center mb-4">
+                        <feature.icon className="w-6 h-6 text-primary" />
+                      </div>
+                      <h4 className="text-lg font-bold text-foreground mb-2">{feature.title}</h4>
+                      <p className="text-sm text-muted-foreground leading-relaxed">{feature.description}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
-            <span className="text-2xl font-extrabold text-foreground">12M</span>
-            <span className="text-[11px] text-muted-foreground font-medium mt-0.5">Liters Saved</span>
+
+            <div className="sm:hidden flex justify-center gap-2 mt-6">
+              {[0, 1, 2].map((idx) => (
+                <button
+                  key={idx}
+                  onClick={() => setActiveFeature(idx)}
+                  className={`w-2 h-2 rounded-full transition-all ${activeFeature === idx ? "bg-primary w-6" : "bg-muted"}`}
+                />
+              ))}
+            </div>
           </div>
         </div>
+      </section>
 
-        {/* Achievement badges */}
-        <div className={`mt-8 transition-all duration-700 delay-600 ${mounted ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"}`}>
-          <p className="text-xs text-muted-foreground mb-3">Recent Achievements</p>
-          <div className="flex items-center gap-2">
-            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center shadow-md shadow-amber-500/20">
-              <Trophy className="w-5 h-5 text-white" />
+      <section id="impact" className="relative py-16 sm:py-24 px-4 sm:px-6">
+        <div className="max-w-6xl mx-auto">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 sm:gap-12 items-center">
+            <div className="space-y-6 sm:space-y-8 order-2 md:order-1">
+              <h3 className="text-3xl sm:text-4xl md:text-5xl font-bold text-foreground">Track Your Impact</h3>
+              <p className="text-sm sm:text-base md:text-lg text-muted-foreground leading-relaxed">
+                Every tree you plant through GreenSight creates measurable environmental change. Monitor growth and join a global movement toward a greener future.
+              </p>
+              <div className="space-y-3 sm:space-y-4">
+                {[
+                  { label: "CO2 Absorption", value: "25 kg/year" },
+                  { label: "Oxygen Production", value: "260 lbs/year" },
+                  { label: "Water Retention", value: "1000 gallons/year" },
+                ].map((stat, idx) => (
+                  <div
+                    key={idx}
+                    className="flex items-start gap-3 sm:gap-4 p-3 sm:p-4 bg-secondary/50 rounded-xl border border-border hover:border-primary/50 transition-colors"
+                  >
+                    <Check className="w-5 h-5 sm:w-6 sm:h-6 text-primary shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-xs sm:text-sm text-muted-foreground">{stat.label}</p>
+                      <p className="text-base sm:text-lg font-semibold text-foreground">{stat.value}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
-            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-primary to-accent flex items-center justify-center shadow-md shadow-primary/20">
-              <TreePine className="w-5 h-5 text-white" />
-            </div>
-            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center shadow-md shadow-blue-500/20">
-              <Droplets className="w-5 h-5 text-white" />
-            </div>
-            <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center border-2 border-dashed border-border">
-              <span className="text-muted-foreground text-xs font-bold">+5</span>
+
+            <div className="relative h-64 sm:h-96 bg-linear-to-br from-primary/10 to-accent/10 rounded-3xl border border-border overflow-hidden group order-1 md:order-2">
+              <Tree3DCanvas />
+              <div className="absolute inset-0 bg-linear-to-t from-primary/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
             </div>
           </div>
         </div>
-      </main>
+      </section>
 
-      {/* Scroll indicator */}
-      <footer className="relative z-10 px-6 py-6 flex flex-col items-center">
-        <ChevronDown className="w-5 h-5 text-muted-foreground animate-bounce" />
-        <p className="text-xs text-muted-foreground mt-2">
-          Scroll to explore more
-        </p>
+      <section className="relative py-16 sm:py-24 px-4 sm:px-6 bg-linear-to-r from-primary/10 to-accent/10">
+        <div className="max-w-4xl mx-auto text-center space-y-6 sm:space-y-8">
+          <h3 className="text-3xl sm:text-4xl md:text-5xl font-bold text-foreground">Ready to Plant?</h3>
+          <p className="text-base sm:text-lg md:text-xl text-muted-foreground max-w-2xl mx-auto px-2">
+            Join thousands transforming their environment with GreenSight AR.
+          </p>
+          <Button
+            onClick={onStartAR}
+            className="bg-primary hover:bg-accent text-primary-foreground rounded-full px-6 sm:px-10 py-3 sm:py-4 text-sm sm:text-base h-auto w-full sm:w-auto"
+          >
+            Launch AR Experience Now
+            <ChevronRight className="w-4 sm:w-5 h-4 sm:h-5 ml-2 shrink-0" />
+          </Button>
+        </div>
+      </section>
+
+      <footer className="border-t border-border py-12 sm:py-16 px-4 sm:px-6">
+        <div className="max-w-6xl mx-auto">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-6 sm:gap-8 mb-8">
+            <div className="col-span-2 md:col-span-1">
+              <h4 className="font-semibold text-foreground mb-3 sm:mb-4 text-sm sm:text-base">GreenSight</h4>
+              <p className="text-xs sm:text-sm text-muted-foreground">Revolutionary AR tree planting technology.</p>
+            </div>
+            <div>
+              <h4 className="font-semibold text-foreground mb-3 sm:mb-4 text-xs sm:text-base">Product</h4>
+              <ul className="space-y-1.5 sm:space-y-2 text-xs sm:text-sm text-muted-foreground">
+                <li>
+                  <Link href="#features" className="hover:text-primary transition-colors">
+                    Features
+                  </Link>
+                </li>
+                <li>
+                  <Link href="#impact" className="hover:text-primary transition-colors">
+                    Impact
+                  </Link>
+                </li>
+              </ul>
+            </div>
+            <div>
+              <h4 className="font-semibold text-foreground mb-3 sm:mb-4 text-xs sm:text-base">Company</h4>
+              <ul className="space-y-1.5 sm:space-y-2 text-xs sm:text-sm text-muted-foreground">
+                <li>
+                  <a href="https://example.com" className="hover:text-primary transition-colors">
+                    About
+                  </a>
+                </li>
+                <li>
+                  <a href="https://example.com" className="hover:text-primary transition-colors">
+                    Blog
+                  </a>
+                </li>
+              </ul>
+            </div>
+            <div>
+              <h4 className="font-semibold text-foreground mb-3 sm:mb-4 text-xs sm:text-base">Legal</h4>
+              <ul className="space-y-1.5 sm:space-y-2 text-xs sm:text-sm text-muted-foreground">
+                <li>
+                  <a href="https://example.com" className="hover:text-primary transition-colors">
+                    Privacy
+                  </a>
+                </li>
+                <li>
+                  <a href="https://example.com" className="hover:text-primary transition-colors">
+                    Terms
+                  </a>
+                </li>
+              </ul>
+            </div>
+          </div>
+          <div className="border-t border-border pt-6 sm:pt-8 flex flex-col md:flex-row items-center justify-between text-xs sm:text-sm text-muted-foreground gap-4">
+            <p>Copyright 2024 GreenSight. All rights reserved.</p>
+            <div className="flex gap-4">
+              <a href="https://x.com" className="hover:text-primary transition-colors">
+                Twitter
+              </a>
+              <a href="https://linkedin.com" className="hover:text-primary transition-colors">
+                LinkedIn
+              </a>
+              <a href="https://instagram.com" className="hover:text-primary transition-colors">
+                Instagram
+              </a>
+            </div>
+          </div>
+        </div>
       </footer>
-
-      {/* CSS for floating animation */}
-      <style jsx>{`
-        @keyframes float {
-          0% {
-            transform: translateY(0) scale(1);
-            opacity: 0;
-          }
-          10% {
-            opacity: 0.6;
-          }
-          90% {
-            opacity: 0.6;
-          }
-          100% {
-            transform: translateY(-100vh) scale(0.5);
-            opacity: 0;
-          }
-        }
-        .animate-float {
-          animation: float linear infinite;
-        }
-      `}</style>
     </div>
   );
 }
