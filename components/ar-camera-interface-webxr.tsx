@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { XR, XRDomOverlay, createXRStore } from "@react-three/xr";
+import { useGLTF } from "@react-three/drei";
 import * as THREE from "three";
 import {
   X,
@@ -47,7 +48,20 @@ type XrPose = {
   quaternion: [number, number, number, number];
 };
 
-const treeData: Tree[] = [
+type UserLocation = {
+  latitude: number;
+  longitude: number;
+  accuracyMeters?: number;
+};
+
+type LocationStatus = "idle" | "requesting" | "granted" | "denied" | "unavailable";
+
+const FALLBACK_LOCATION: UserLocation = {
+  latitude: -6.2088,
+  longitude: 106.8456,
+};
+
+const fallbackTreeData: Tree[] = [
   {
     id: 1,
     name: "Japanese Maple",
@@ -86,6 +100,55 @@ const treeData: Tree[] = [
   },
 ];
 
+const FALLBACK_TREE_MODEL_PATH = "/models/pine.glb";
+
+const GHIBLI_VERTEX_SHADER = /* glsl */ `
+  varying vec3 vNormal;
+  varying vec3 vWorldPosition;
+
+  void main() {
+    vNormal = normal;
+    vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+    vWorldPosition = worldPosition.xyz;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+
+const GHIBLI_FRAGMENT_SHADER = /* glsl */ `
+  precision highp float;
+
+  uniform vec3 colorMap[4];
+  uniform vec3 lightPosition;
+  uniform float brightnessThresholds[3];
+  uniform float opacity;
+
+  varying vec3 vNormal;
+  varying vec3 vWorldPosition;
+
+  void main() {
+    vec3 worldNormal = normalize(mat3(modelMatrix) * normalize(vNormal));
+    vec3 lightDirection = normalize(lightPosition - vWorldPosition);
+    float brightness = max(dot(worldNormal, lightDirection), 0.0);
+    brightness = brightness * 0.82 + 0.18;
+
+    vec3 finalColor;
+    if (brightness > brightnessThresholds[0]) {
+      finalColor = colorMap[0];
+    } else if (brightness > brightnessThresholds[1]) {
+      finalColor = colorMap[1];
+    } else if (brightness > brightnessThresholds[2]) {
+      finalColor = colorMap[2];
+    } else {
+      finalColor = colorMap[3];
+    }
+
+    gl_FragColor = vec4(finalColor, opacity);
+  }
+`;
+
+const FOLIAGE_GHIBLI_COLORS = ["#6fa66d", "#4f8454", "#2f5f3c", "#1b3f2a"];
+const TRUNK_GHIBLI_COLORS = ["#8b6848", "#6f5238", "#4d3927", "#2f2218"];
+
 const xrStore = createXRStore({
   offerSession: false,
   hitTest: true,
@@ -97,7 +160,7 @@ const xrStore = createXRStore({
   screenInput: false,
   transientPointer: false,
   meshDetection: false,
-  planeDetection: false,
+  planeDetection: true,
   layers: false,
   depthSensing: false,
 });
@@ -166,6 +229,84 @@ function GroundRing({ color }: { color: string }) {
   );
 }
 
+function isTreeWoodPart(mesh: THREE.Mesh) {
+  const material = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
+  const materialName = material?.name?.toLowerCase() ?? "";
+  const meshName = mesh.name.toLowerCase();
+  const label = `${meshName} ${materialName}`;
+
+  if (/(trunk|stem|branch|wood|log|bark)/.test(label)) {
+    return true;
+  }
+
+  if (material instanceof THREE.MeshStandardMaterial || material instanceof THREE.MeshBasicMaterial) {
+    const { r, g, b } = material.color;
+    return r > g && g > b * 0.7;
+  }
+
+  return false;
+}
+
+function buildGhibliMaterial(colors: string[], opacity: number, side: THREE.Side) {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      colorMap: {
+        value: colors.map((color) => new THREE.Color(color).convertLinearToSRGB()),
+      },
+      brightnessThresholds: {
+        value: [0.7, 0.42, 0.15],
+      },
+      lightPosition: {
+        value: new THREE.Vector3(4, 8, 3),
+      },
+      opacity: {
+        value: opacity,
+      },
+    },
+    vertexShader: GHIBLI_VERTEX_SHADER,
+    fragmentShader: GHIBLI_FRAGMENT_SHADER,
+    transparent: opacity < 1,
+    side,
+  });
+}
+
+function PineTreeModel({ dimmed }: { dimmed: boolean }) {
+  const { scene } = useGLTF(FALLBACK_TREE_MODEL_PATH);
+  const { styledScene, baseYOffset, normalizedScale } = useMemo(() => {
+    const clonedScene = scene.clone(true);
+    const opacity = dimmed ? 0.72 : 1;
+
+    clonedScene.traverse((object) => {
+      const mesh = object as THREE.Mesh;
+      if (!mesh.isMesh || mesh.material == null) {
+        return;
+      }
+
+      const sourceMaterial = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
+      const colors = isTreeWoodPart(mesh) ? TRUNK_GHIBLI_COLORS : FOLIAGE_GHIBLI_COLORS;
+      mesh.material = buildGhibliMaterial(colors, opacity, sourceMaterial.side ?? THREE.FrontSide);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.frustumCulled = false;
+    });
+
+    const box = new THREE.Box3().setFromObject(clonedScene);
+    const size = box.getSize(new THREE.Vector3());
+
+    return {
+      styledScene: clonedScene,
+      baseYOffset: -box.min.y,
+      normalizedScale: size.y > 0 ? 6 / size.y : 1,
+    };
+  }, [dimmed, scene]);
+
+  return (
+    <group position={[0, baseYOffset * normalizedScale, 0]} scale={normalizedScale}>
+      <primitive object={styledScene} />
+    </group>
+  );
+}
+
 function FallbackPlacementScene({
   tree,
   screenPos,
@@ -195,18 +336,22 @@ function FallbackPlacementScene({
 
   return (
     <group position={[worldPos.x, worldPos.y, worldPos.z]} scale={0.18}>
-      <LowPolyTree color={tree.color} dimmed={isPlacementMode} />
+      {isPlacementMode ? (
+        <LowPolyTree color={tree.color} dimmed />
+      ) : (
+        <Suspense fallback={<LowPolyTree color={tree.color} dimmed={false} />}>
+          <PineTreeModel dimmed={false} />
+        </Suspense>
+      )}
       {isPlacementMode && <GroundRing color={tree.color} />}
     </group>
   );
 }
 
-// ─── XR Demo Scene ────────────────────────────────────────────────────────────
-// Tree is auto-placed 2 m in front at floor level (y = 0 in local-floor space).
-// No hit-test required → always visible, world-locked, never drifts.
-const XR_SCALE = 0.5;          // scale → ~1.8 m tall sapling
-const XR_DEPTH = -2.0;         // metres in front of user
-const XR_FLOOR_OFFSET = 1.06 * XR_SCALE; // lifts trunk base to sit on y = 0
+const XR_TREE_SCALE = 0.45;
+const XR_RETICLE_MISS_TOLERANCE = 20;
+const XR_RETICLE_POSITION_LERP = 0.28;
+const XR_RETICLE_ROTATION_SLERP = 0.22;
 
 function XRPulsingRing({ color }: { color: string }) {
   const meshRef = useRef<THREE.Mesh>(null);
@@ -220,68 +365,297 @@ function XRPulsingRing({ color }: { color: string }) {
   });
 
   return (
-    <mesh ref={meshRef} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.012, XR_DEPTH]}>
+    <mesh ref={meshRef} rotation={[-Math.PI / 2, 0, 0]}>
       <ringGeometry args={[XR_SCALE * 0.78, XR_SCALE * 0.95, 48]} />
       <meshBasicMaterial color={threeColor} transparent opacity={0.55} side={THREE.DoubleSide} />
     </mesh>
   );
 }
 
-function XRDemoScene({ tree, placed }: { tree: Tree; placed: boolean }) {
+const XR_SCALE = 0.5;
+
+function XRHitTestReticle({
+  enabled,
+  color,
+  onHitPose,
+  onSurfaceFound,
+}: {
+  enabled: boolean;
+  color: string;
+  onHitPose: (pose: XrPose) => void;
+  onSurfaceFound: (found: boolean) => void;
+}) {
+  const { gl } = useThree();
+  const hitTestSourceRef = useRef<XRHitTestSource | null>(null);
+  const reticleRef = useRef<THREE.Group>(null);
+  const lastSurfaceFoundRef = useRef(false);
+  const missedFramesRef = useRef(0);
+  const smoothedPositionRef = useRef(new THREE.Vector3());
+  const smoothedQuaternionRef = useRef(new THREE.Quaternion());
+  const hasSmoothedPoseRef = useRef(false);
+
+  const updateReticlePose = useCallback(
+    (position: THREE.Vector3, quaternion: THREE.Quaternion) => {
+      if (!hasSmoothedPoseRef.current) {
+        smoothedPositionRef.current.copy(position);
+        smoothedQuaternionRef.current.copy(quaternion);
+        hasSmoothedPoseRef.current = true;
+      } else {
+        smoothedPositionRef.current.lerp(position, XR_RETICLE_POSITION_LERP);
+        smoothedQuaternionRef.current.slerp(quaternion, XR_RETICLE_ROTATION_SLERP);
+      }
+
+      onHitPose({
+        position: [
+          smoothedPositionRef.current.x,
+          smoothedPositionRef.current.y,
+          smoothedPositionRef.current.z,
+        ],
+        quaternion: [
+          smoothedQuaternionRef.current.x,
+          smoothedQuaternionRef.current.y,
+          smoothedQuaternionRef.current.z,
+          smoothedQuaternionRef.current.w,
+        ],
+      });
+
+      if (reticleRef.current) {
+        reticleRef.current.visible = true;
+        reticleRef.current.position.copy(smoothedPositionRef.current);
+        reticleRef.current.quaternion.copy(smoothedQuaternionRef.current);
+      }
+    },
+    [onHitPose],
+  );
+
+  useEffect(() => {
+    if (!enabled) {
+      hitTestSourceRef.current?.cancel();
+      hitTestSourceRef.current = null;
+      if (reticleRef.current) {
+        reticleRef.current.visible = false;
+      }
+      onSurfaceFound(false);
+      lastSurfaceFoundRef.current = false;
+      missedFramesRef.current = 0;
+      hasSmoothedPoseRef.current = false;
+      return;
+    }
+
+    const activeSession = gl.xr.getSession();
+    const requestReferenceSpace = activeSession?.requestReferenceSpace.bind(activeSession);
+    const requestHitTestSource = activeSession?.requestHitTestSource?.bind(activeSession);
+
+    if (!activeSession || requestReferenceSpace == null || requestHitTestSource == null) {
+      onSurfaceFound(false);
+      lastSurfaceFoundRef.current = false;
+      return;
+    }
+
+    let cancelled = false;
+
+    async function setupHitTest() {
+      try {
+        const viewerSpace = await requestReferenceSpace!("viewer");
+        if (cancelled) {
+          return;
+        }
+        const hitTestSource = await requestHitTestSource!({ space: viewerSpace });
+        if (hitTestSource == null) {
+          onSurfaceFound(false);
+          lastSurfaceFoundRef.current = false;
+          return;
+        }
+        hitTestSourceRef.current = hitTestSource;
+      } catch {
+        onSurfaceFound(false);
+        lastSurfaceFoundRef.current = false;
+      }
+    }
+
+    const handleSessionEnd = () => {
+      hitTestSourceRef.current?.cancel();
+      hitTestSourceRef.current = null;
+      onSurfaceFound(false);
+      lastSurfaceFoundRef.current = false;
+      missedFramesRef.current = 0;
+      hasSmoothedPoseRef.current = false;
+    };
+
+    void setupHitTest();
+    activeSession.addEventListener("end", handleSessionEnd);
+
+    return () => {
+      cancelled = true;
+      activeSession.removeEventListener("end", handleSessionEnd);
+      hitTestSourceRef.current?.cancel();
+      hitTestSourceRef.current = null;
+      onSurfaceFound(false);
+      lastSurfaceFoundRef.current = false;
+      missedFramesRef.current = 0;
+      hasSmoothedPoseRef.current = false;
+    };
+  }, [enabled, gl, onSurfaceFound]);
+
+  useFrame(() => {
+    if (!enabled) {
+      return;
+    }
+
+    const frame = gl.xr.getFrame();
+    const referenceSpace = gl.xr.getReferenceSpace();
+    const hitTestSource = hitTestSourceRef.current;
+
+    if (!frame || !referenceSpace || !hitTestSource) {
+      missedFramesRef.current += 1;
+      if (reticleRef.current && missedFramesRef.current > XR_RETICLE_MISS_TOLERANCE) {
+        reticleRef.current.visible = false;
+      }
+      if (lastSurfaceFoundRef.current && missedFramesRef.current > XR_RETICLE_MISS_TOLERANCE) {
+        onSurfaceFound(false);
+        lastSurfaceFoundRef.current = false;
+      }
+      return;
+    }
+
+    const hitResults = frame.getHitTestResults(hitTestSource);
+    if (hitResults.length === 0) {
+      missedFramesRef.current += 1;
+      if (reticleRef.current && missedFramesRef.current > XR_RETICLE_MISS_TOLERANCE) {
+        reticleRef.current.visible = false;
+      }
+      if (lastSurfaceFoundRef.current && missedFramesRef.current > XR_RETICLE_MISS_TOLERANCE) {
+        onSurfaceFound(false);
+        lastSurfaceFoundRef.current = false;
+      }
+      return;
+    }
+
+    const pose = hitResults[0].getPose(referenceSpace);
+    if (pose == null) {
+      return;
+    }
+
+    const targetPosition = new THREE.Vector3(
+      pose.transform.position.x,
+      pose.transform.position.y,
+      pose.transform.position.z,
+    );
+    const targetQuaternion = new THREE.Quaternion(
+      pose.transform.orientation.x,
+      pose.transform.orientation.y,
+      pose.transform.orientation.z,
+      pose.transform.orientation.w,
+    );
+
+    missedFramesRef.current = 0;
+
+    updateReticlePose(targetPosition, targetQuaternion);
+
+    // Mark ground as available immediately when we have a valid hit pose.
+    if (!lastSurfaceFoundRef.current) {
+      onSurfaceFound(true);
+      lastSurfaceFoundRef.current = true;
+    }
+  });
+
+  return (
+    <group ref={reticleRef} visible={false}>
+      <XRPulsingRing color={color} />
+    </group>
+  );
+}
+
+function XRAnchoredScene({
+  tree,
+  placed,
+  placementMode,
+  placedPose,
+  previewPose,
+  onHitPose,
+  onSurfaceFound,
+}: {
+  tree: Tree;
+  placed: boolean;
+  placementMode: boolean;
+  placedPose: XrPose | null;
+  previewPose: XrPose | null;
+  onHitPose: (pose: XrPose) => void;
+  onSurfaceFound: (found: boolean) => void;
+}) {
   return (
     <>
-      {/* Soft shadow circle on the floor */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.004, XR_DEPTH]}>
-        <circleGeometry args={[XR_SCALE * 0.82, 40]} />
-        <meshBasicMaterial color="#000000" transparent opacity={0.22} />
-      </mesh>
-
-      {/* Pulsing anchor ring while awaiting confirmation */}
-      {!placed && <XRPulsingRing color={tree.color} />}
-
-      {/* Static confirmation ring after tree is placed */}
-      {placed && (
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.012, XR_DEPTH]}>
-          <ringGeometry args={[XR_SCALE * 0.78, XR_SCALE * 0.95, 48]} />
-          <meshBasicMaterial color={tree.color} transparent opacity={0.4} side={THREE.DoubleSide} />
-        </mesh>
-      )}
-
-      {/* Warm fill light so tree looks vivid against the passthrough feed */}
-      <pointLight
-        position={[0.6, XR_FLOOR_OFFSET + 2 * XR_SCALE, XR_DEPTH - 0.4]}
-        intensity={4}
-        color="#fffbe6"
+      <XRHitTestReticle
+        enabled={placementMode && !placed}
+        color={tree.color}
+        onHitPose={onHitPose}
+        onSurfaceFound={onSurfaceFound}
       />
 
-      {/* The tree — perfectly floor-seated at a fixed world coordinate */}
-      <group position={[0, XR_FLOOR_OFFSET, XR_DEPTH]} scale={XR_SCALE}>
-        <LowPolyTree color={tree.color} dimmed={!placed} />
-      </group>
+      {placementMode && !placed && previewPose && (
+        <group position={previewPose.position} quaternion={previewPose.quaternion} scale={XR_TREE_SCALE}>
+          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]}>
+            <circleGeometry args={[1.35, 40]} />
+            <meshBasicMaterial color="#000000" transparent opacity={0.18} />
+          </mesh>
+          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.015, 0]}>
+            <ringGeometry args={[1.25, 1.55, 48]} />
+            <meshBasicMaterial color={tree.color} transparent opacity={0.5} side={THREE.DoubleSide} />
+          </mesh>
+          <LowPolyTree color={tree.color} dimmed />
+        </group>
+      )}
+
+      {placedPose && (
+        <group position={placedPose.position} quaternion={placedPose.quaternion} scale={XR_TREE_SCALE}>
+          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]}>
+            <circleGeometry args={[1.35, 40]} />
+            <meshBasicMaterial color="#000000" transparent opacity={0.22} />
+          </mesh>
+
+          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.015, 0]}>
+            <ringGeometry args={[1.25, 1.55, 48]} />
+            <meshBasicMaterial color={tree.color} transparent opacity={0.42} side={THREE.DoubleSide} />
+          </mesh>
+
+          <pointLight position={[1.8, 3.2, -0.8]} intensity={3.6} color="#fffbe6" />
+          <LowPolyTree color={tree.color} dimmed={false} />
+        </group>
+      )}
     </>
   );
 }
 
+useGLTF.preload(FALLBACK_TREE_MODEL_PATH);
+
 export function ARCameraInterfaceWebXR({ onClose }: ARCameraInterfaceProps) {
   const [isScanning, setIsScanning] = useState(true);
   const [showRecommendation, setShowRecommendation] = useState(false);
-  const [selectedTree, setSelectedTree] = useState<Tree>(treeData[0]);
+  const [recommendationTrees, setRecommendationTrees] = useState<Tree[]>(fallbackTreeData);
+  const [recommendationLoading, setRecommendationLoading] = useState(false);
+  const [recommendationError, setRecommendationError] = useState<string | null>(null);
+  const [selectedTree, setSelectedTree] = useState<Tree>(fallbackTreeData[0]);
   const [scanProgress, setScanProgress] = useState(0);
   const [placementMode, setPlacementMode] = useState(false);
   const [treePlaced, setTreePlaced] = useState(false);
   const [showImpact, setShowImpact] = useState(false);
   const [treePosition, setTreePosition] = useState<PlacementPos>({ x: 0, y: 0 });
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const [locationStatus, setLocationStatus] = useState<LocationStatus>("idle");
+  const [locationError, setLocationError] = useState<string | null>(null);
+  const [userLocation, setUserLocation] = useState<UserLocation | null>(null);
   const [xrSupported, setXrSupported] = useState(false);
   const [xrSupportChecked, setXrSupportChecked] = useState(false);
   const [xrActive, setXrActive] = useState(false);
   const [xrSurfaceFound, setXrSurfaceFound] = useState(false);
   const [xrError, setXrError] = useState<string | null>(null);
   const [xrPlacedPose, setXrPlacedPose] = useState<XrPose | null>(null);
+  const [xrPlacementBusy, setXrPlacementBusy] = useState(false);
   const arViewRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const latestHitRef = useRef<XrPose | null>(null);
+  const lastPlaceablePoseRef = useRef<XrPose | null>(null);
 
   const stopCamera = useCallback(() => {
     streamRef.current?.getTracks().forEach((track) => track.stop());
@@ -289,6 +663,45 @@ export function ARCameraInterfaceWebXR({ onClose }: ARCameraInterfaceProps) {
     if (videoRef.current != null) {
       videoRef.current.srcObject = null;
     }
+  }, []);
+
+  const requestLocation = useCallback(async () => {
+    if (typeof navigator === "undefined" || navigator.geolocation == null) {
+      setLocationStatus("unavailable");
+      setLocationError("Geolocation is not available in this browser. Using fallback coordinates.");
+      return;
+    }
+
+    setLocationStatus("requesting");
+    setLocationError(null);
+
+    await new Promise<void>((resolve) => {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          setUserLocation({
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+            accuracyMeters: position.coords.accuracy,
+          });
+          setLocationStatus("granted");
+          resolve();
+        },
+        (error) => {
+          setLocationStatus(error.code === error.PERMISSION_DENIED ? "denied" : "unavailable");
+          setLocationError(
+            error.code === error.PERMISSION_DENIED
+              ? "Location permission denied. Using fallback coordinates for recommendations."
+              : "Could not determine your location. Using fallback coordinates for recommendations.",
+          );
+          resolve();
+        },
+        {
+          enableHighAccuracy: true,
+          timeout: 8000,
+          maximumAge: 5 * 60 * 1000,
+        },
+      );
+    });
   }, []);
 
   const startCamera = useCallback(async () => {
@@ -301,8 +714,9 @@ export function ARCameraInterfaceWebXR({ onClose }: ARCameraInterfaceProps) {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: { ideal: "environment" },
-          width: { ideal: 1920 },
-          height: { ideal: 1080 },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          frameRate: { ideal: 30, max: 30 },
         },
         audio: false,
       });
@@ -326,6 +740,10 @@ export function ARCameraInterfaceWebXR({ onClose }: ARCameraInterfaceProps) {
       stopCamera();
     };
   }, [startCamera, stopCamera]);
+
+  useEffect(() => {
+    void requestLocation();
+  }, [requestLocation]);
 
   useEffect(() => {
     let cancelled = false;
@@ -366,11 +784,15 @@ export function ARCameraInterfaceWebXR({ onClose }: ARCameraInterfaceProps) {
       setXrActive(active);
 
       if (active) {
-        // Demo mode: tree is auto-placed so surface is always "found" instantly
-        setXrSurfaceFound(true);
+        setXrSurfaceFound(false);
+        setXrPlacementBusy(false);
+        latestHitRef.current = null;
+        lastPlaceablePoseRef.current = null;
       } else {
         setXrSurfaceFound(false);
+        setXrPlacementBusy(false);
         latestHitRef.current = null;
+        lastPlaceablePoseRef.current = null;
         if (streamRef.current == null) {
           void startCamera();
         }
@@ -407,6 +829,83 @@ export function ARCameraInterfaceWebXR({ onClose }: ARCameraInterfaceProps) {
       });
     }
   }, [placementMode, xrActive]);
+
+  useEffect(() => {
+    if (!showRecommendation) {
+      return;
+    }
+
+    if (locationStatus === "requesting") {
+      return;
+    }
+
+    let cancelled = false;
+    const location = userLocation ?? FALLBACK_LOCATION;
+
+    async function loadRecommendations() {
+      setRecommendationLoading(true);
+      setRecommendationError(null);
+
+      try {
+        const response = await fetch("/api/proxo/recommend", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            location: {
+              latitude: location.latitude,
+              longitude: location.longitude,
+            },
+            areaSqMeters: 100,
+            preferences: ["native", "fast-growing"],
+          }),
+        });
+
+        let payload: { trees?: Tree[]; error?: string; details?: string } | null = null;
+        try {
+          payload = (await response.json()) as { trees?: Tree[]; error?: string; details?: string };
+        } catch {
+          payload = null;
+        }
+
+        if (!response.ok) {
+          const message = payload?.details ?? payload?.error ?? "Failed to load recommendations.";
+          throw new Error(message);
+        }
+
+        const trees = payload?.trees ?? [];
+        if (trees.length === 0) {
+          throw new Error("No recommendation data returned from backend.");
+        }
+
+        if (!cancelled) {
+          setRecommendationTrees(trees);
+          setSelectedTree(trees[0]);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setRecommendationTrees(fallbackTreeData);
+          setSelectedTree(fallbackTreeData[0]);
+          setRecommendationError(
+            error instanceof Error
+              ? `${error.message} Showing fallback trees.`
+              : "Could not reach backend. Showing fallback trees.",
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setRecommendationLoading(false);
+        }
+      }
+    }
+
+    void loadRecommendations();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [locationStatus, showRecommendation, userLocation]);
 
   const handleSelectTree = (tree: Tree) => {
     setSelectedTree(tree);
@@ -470,9 +969,27 @@ export function ARCameraInterfaceWebXR({ onClose }: ARCameraInterfaceProps) {
 
   const handleConfirmPlacement = () => {
     if (xrActive) {
+      if (xrPlacementBusy || treePlaced) {
+        return;
+      }
+
+      const pose = latestHitRef.current ?? lastPlaceablePoseRef.current;
+      if (!pose) {
+        setXrError("Ground belum terdeteksi. Arahkan kamera ke lantai/tanah hingga reticle muncul.");
+        return;
+      }
+
+      setXrPlacementBusy(true);
+      setXrPlacedPose({
+        position: [...pose.position] as [number, number, number],
+        quaternion: [...pose.quaternion] as [number, number, number, number],
+      });
       setPlacementMode(false);
       setTreePlaced(true);
       setXrError(null);
+      setTimeout(() => {
+        setXrPlacementBusy(false);
+      }, 250);
       return;
     }
 
@@ -486,8 +1003,10 @@ export function ARCameraInterfaceWebXR({ onClose }: ARCameraInterfaceProps) {
       setPlacementMode(true);
       setShowImpact(false);
       setXrPlacedPose(null);
-      latestHitRef.current = null;
-      setXrSurfaceFound(false);
+      setXrPlacementBusy(false);
+      if (!xrSurfaceFound) {
+        setXrError("Ground belum terdeteksi. Tidak bisa memindahkan pohon.");
+      }
       return;
     }
 
@@ -503,8 +1022,10 @@ export function ARCameraInterfaceWebXR({ onClose }: ARCameraInterfaceProps) {
     setShowRecommendation(true);
     setPlacementMode(false);
     setXrPlacedPose(null);
+    setXrPlacementBusy(false);
     setXrError(null);
     latestHitRef.current = null;
+    lastPlaceablePoseRef.current = null;
     setXrSurfaceFound(false);
   };
 
@@ -548,7 +1069,7 @@ export function ARCameraInterfaceWebXR({ onClose }: ARCameraInterfaceProps) {
       <div className="absolute inset-0 pointer-events-none">
         <Canvas
           camera={{ position: [0, 0, 5], fov: 75 }}
-          gl={{ alpha: true, antialias: true }}
+          gl={{ alpha: true, antialias: false, powerPreference: "high-performance" }}
           style={{ background: "transparent" }}
         >
           <XR store={xrStore}>
@@ -563,7 +1084,25 @@ export function ARCameraInterfaceWebXR({ onClose }: ARCameraInterfaceProps) {
             />
 
             {xrActive && (
-              <XRDemoScene tree={selectedTree} placed={treePlaced} />
+              <XRAnchoredScene
+                tree={selectedTree}
+                placed={treePlaced}
+                placementMode={placementMode}
+                placedPose={xrPlacedPose}
+                previewPose={latestHitRef.current}
+                onHitPose={(pose) => {
+                  latestHitRef.current = pose;
+                  lastPlaceablePoseRef.current = pose;
+                }}
+                onSurfaceFound={(found) => {
+                  setXrSurfaceFound((prev) => (prev === found ? prev : found));
+                  if (!found) {
+                    latestHitRef.current = null;
+                  } else {
+                    setXrError(null);
+                  }
+                }}
+              />
             )}
 
             <XRDomOverlay>
@@ -572,8 +1111,10 @@ export function ARCameraInterfaceWebXR({ onClose }: ARCameraInterfaceProps) {
                   <div className="pointer-events-auto flex items-center justify-between gap-3">
                     <div className="rounded-2xl border border-white/10 bg-black/35 px-4 py-2 text-sm text-white backdrop-blur-xl">
                       {placementMode && !treePlaced
-                        ? "Tree is ready — tap Place Tree Here to anchor it."
-                        : "Tree anchored in AR space."}
+                        ? xrSurfaceFound
+                          ? "Ground terdeteksi. Kamu bisa place atau memindahkan pohon di area ground ini."
+                          : "Scan ground terlebih dahulu. Pohon hanya bisa diletakkan di atas ground yang terdeteksi."
+                        : "Tree placed in AR space."}
                     </div>
                     <Button
                       variant="outline"
@@ -590,15 +1131,24 @@ export function ARCameraInterfaceWebXR({ onClose }: ARCameraInterfaceProps) {
                         <div className="mb-3 flex items-center gap-2">
                           <Move className="h-4 w-4 text-emerald-400" />
                           <p className="text-sm text-white/80">
-                            Scan the floor, then anchor the tree at the reticle.
+                            Arahkan kamera ke tanah/lantai. Saat reticle muncul, tombol place langsung aktif.
                           </p>
                         </div>
                         <Button
                           onClick={handleConfirmPlacement}
+                          onPointerDown={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                          }}
+                          onTouchStart={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            handleConfirmPlacement();
+                          }}
                           className="w-full bg-linear-to-r from-emerald-500 to-emerald-600 text-white hover:from-emerald-600 hover:to-emerald-700"
                         >
                           <Check className="mr-2 h-4 w-4" />
-                          Place Tree Here
+                          {xrPlacementBusy ? "Placing..." : "Place Tree Here"}
                         </Button>
                       </div>
                     )}
@@ -802,7 +1352,36 @@ export function ARCameraInterfaceWebXR({ onClose }: ARCameraInterfaceProps) {
 
       {showRecommendation && (
         <div onClick={(event) => event.stopPropagation()}>
-          <AIRecommendationCard trees={treeData} onSelectTree={handleSelectTree} />
+          {recommendationLoading && (
+            <div className="mx-4 mb-2 rounded-2xl border border-white/10 bg-black/40 px-4 py-3 text-sm text-white/70 backdrop-blur-xl">
+              {locationStatus === "requesting"
+                ? "Waiting for GPS permission..."
+                : "Loading recommendations from backend..."}
+            </div>
+          )}
+          {recommendationError && (
+            <div className="mx-4 mb-2 rounded-2xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-xs text-amber-200 backdrop-blur-xl">
+              {recommendationError}
+            </div>
+          )}
+          {showRecommendation && locationError && (
+            <div className="mx-4 mb-2 rounded-2xl border border-sky-500/20 bg-sky-500/10 px-4 py-3 text-xs text-sky-100 backdrop-blur-xl">
+              {locationError}
+            </div>
+          )}
+          {showRecommendation && locationStatus === "granted" && userLocation && (
+            <div className="mx-4 mb-2 flex items-center justify-between gap-3 rounded-2xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-xs text-emerald-100 backdrop-blur-xl">
+              <span>
+                Using your GPS location ({userLocation.latitude.toFixed(4)}, {userLocation.longitude.toFixed(4)})
+              </span>
+              {typeof userLocation.accuracyMeters === "number" && (
+                <span className="shrink-0 text-emerald-200/80">
+                  ±{Math.round(userLocation.accuracyMeters)} m
+                </span>
+              )}
+            </div>
+          )}
+          <AIRecommendationCard trees={recommendationTrees} onSelectTree={handleSelectTree} />
         </div>
       )}
 
@@ -842,7 +1421,7 @@ export function ARCameraInterfaceWebXR({ onClose }: ARCameraInterfaceProps) {
                 </div>
                 <p className="text-xs text-white/60">
                   {xrSupported
-                    ? "Supported here. Start WebXR to scan the floor and anchor the tree on a detected surface."
+                    ? "Supported here. Start WebXR for immersive AR. Kamu bisa place pohon bebas, tidak wajib scan ground dulu."
                     : "Not supported on this browser/device. The app will stay in camera preview mode."}
                 </p>
               </div>

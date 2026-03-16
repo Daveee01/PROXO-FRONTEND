@@ -207,19 +207,13 @@ export function ARCameraInterface({ onClose }: ARCameraInterfaceProps) {
     }
   }, [isScanning]);
 
-  // Default tree position (center-bottom) when entering placement mode
-  useEffect(() => {
-    if (placementMode) {
-      setTreePosition({
-        x: window.innerWidth / 2,
-        y: window.innerHeight * 0.72,
-      });
-    }
-  }, [placementMode]);
-
   const handleSelectTree = (tree: (typeof treeData)[0]) => {
     setSelectedTree(tree);
     setShowRecommendation(false);
+    setTreePosition({
+      x: window.innerWidth / 2,
+      y: window.innerHeight * 0.72,
+    });
     setPlacementMode(true);
   };
 

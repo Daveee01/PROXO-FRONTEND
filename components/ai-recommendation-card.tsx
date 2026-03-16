@@ -41,7 +41,7 @@ export function AIRecommendationCard({ trees, onSelectTree }: AIRecommendationCa
           </div>
           <div className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-emerald-500/20 border border-emerald-500/30">
             <Leaf className="w-3.5 h-3.5 text-emerald-400" />
-            <span className="text-emerald-400 text-xs font-semibold">3 matches</span>
+            <span className="text-emerald-400 text-xs font-semibold">{trees.length} matches</span>
           </div>
         </div>
 

@@ -34,6 +34,56 @@ npm ci
 npm run dev
 ```
 
+## Connect To PROXO Backend (Separate Deploy)
+
+This frontend now calls a Next.js server route at /api/proxo/recommend.
+That route forwards requests to your Go backend and attaches X-API-Key,
+matching backend middleware behavior in internal/middleware/auth.go.
+
+1. Create frontend env file:
+
+```bash
+cp .env.example .env.local
+```
+
+Windows PowerShell:
+
+```powershell
+Copy-Item .env.example .env.local
+```
+
+2. Set frontend server env vars in .env.local:
+
+```env
+PROXO_BACKEND_URL=http://localhost:8080
+PROXO_API_KEY=
+```
+
+3. If backend PROXO_API_KEY is set, use the same value in frontend PROXO_API_KEY.
+
+4. Run both apps on different ports:
+
+```bash
+# backend (port 8080)
+cd ../proxo-backend
+go run main.go
+
+# frontend (port 3000)
+cd ../PROXO-FRONTEND
+npm run dev
+```
+
+5. Ensure backend CORS allows your frontend origin, for example:
+
+```env
+ALLOWED_ORIGINS=http://localhost:3000
+```
+
+For production, set:
+- PROXO_BACKEND_URL=https://your-backend-domain
+- PROXO_API_KEY=<same backend key>
+- backend FRONTEND_URL and ALLOWED_ORIGINS to your deployed frontend domain
+
 ## Getting Started
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
